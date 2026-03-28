@@ -2,4 +2,4 @@
 
 
 
-Added training set to the data folder in git ignore for easy access on any device after setup (no need to change code), make sure to enter the folder as data/training/ then within training add both datasets A and B
+Added training set in the data folder but with git ignore for easy access on any device after setup (no need to change code) without repo bloat, make sure to enter the folder as data/training/ then within training add both datasets A and B
