@@ -10,6 +10,10 @@ from sklearn.metrics import (classification_report, confusion_matrix,
                               recall_score, precision_score)
 from sklearn.preprocessing import StandardScaler
 
+#We can change it back to SVM if we would like but the performance is extremely slow, i think random forest will be our best bet for the base model
+
+#Potential Design Decisions, change features, add more features, change scalling to better optimize  and prioritize sepsis cases
+
 features = ['HR', 'O2Sat', 'Temp', 'Resp', 'Age', 'ICULOS'] #what should be the baseline features? Predicting SepsisLabel
 
 train_clean = train[features + ['SepsisLabel']].dropna()
