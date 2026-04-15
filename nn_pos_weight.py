@@ -1,17 +1,28 @@
 """
-Team Baseline — Neural Network Classifier (predict SepsisLabel)
+Mamoon's Design Decision — NN Variant: pos_weight for class imbalance
 
-Design choices (team-agreed):
-- All allowed input features (exclude target SepsisLabel, regression target MAP, patient_id)
-- Mean imputation for missing values (fit per CV fold to avoid leakage)
-- StandardScaler (NNs need standardized inputs)
-- Patient-level split (done in datasetup.py)
-- 5-fold GroupKFold CV on training set, grouped by patient_id
-- Simple feed-forward NN: Input -> 64 -> 32 -> 1, ReLU activations, dropout disabled
-- BCEWithLogitsLoss (NO pos_weight — imbalance handling is a team member's DD)
-- Adam optimizer, lr=1e-3, batch_size=1024, 10 epochs
-- Metrics: AUROC, F1, Precision, Recall — CV mean±std and final held-out test
-- Fixed seed for reproducibility
+Difference from baseline (neural_network.py):
+    BCEWithLogitsLoss()  ->  BCEWithLogitsLoss(pos_weight = num_neg / num_pos)
+    pos_weight is computed from the training fold so the positive (sepsis)
+    class contributes proportionally more to the loss.
+    Everything else identical (architecture, features, imputer, scaler,
+    optimizer, lr, batch_size, epochs, seed, CV folds).
+
+Hypothesis:
+    pos_weight will IMPROVE Recall (>= +0.10) AND AUROC (>= +0.03) over the
+    baseline, because sepsis prevalence is ~2%; an unweighted BCE loss lets
+    the model minimize loss by predicting "no sepsis" almost always.
+    Precision is expected to DROP — that trade-off is clinically acceptable
+    (missing sepsis is worse than a false alarm).
+
+Acceptance threshold:
+    Test Recall(variant) - Recall(baseline) >= +0.10
+    AND Test AUROC(variant) - AUROC(baseline) >= +0.03
+    -> hypothesis supported.
+
+Evidence:
+    - Table of AUROC / F1 / Precision / Recall: baseline vs variant (CV + test).
+    - Side-by-side confusion matrices (baseline vs variant) on the test set.
 """
 
 import numpy as np
@@ -61,9 +72,10 @@ class MLP(nn.Module):
         return self.net(x).squeeze(-1)
 
 
-def train_one_model(X_tr, y_tr, n_features):
+def train_one_model(X_tr, y_tr, n_features, pos_weight_value):
     model = MLP(n_features).to(DEVICE)
-    loss_fn = nn.BCEWithLogitsLoss()  # no pos_weight — baseline
+    pos_weight = torch.tensor([pos_weight_value], dtype=torch.float32, device=DEVICE)
+    loss_fn = nn.BCEWithLogitsLoss(pos_weight=pos_weight)   # <-- the DD
     opt = torch.optim.Adam(model.parameters(), lr=LR)
 
     ds = TensorDataset(
@@ -83,16 +95,14 @@ def train_one_model(X_tr, y_tr, n_features):
             loss.backward()
             opt.step()
             total_loss += loss.item() * xb.size(0)
-        avg = total_loss / len(ds)
-        print(f"    epoch {epoch+1:2d}/{EPOCHS}  loss={avg:.4f}")
+        print(f"    epoch {epoch+1:2d}/{EPOCHS}  loss={total_loss/len(ds):.4f}")
     return model
 
 
 @torch.no_grad()
 def predict_proba(model, X):
     model.eval()
-    xb = torch.tensor(X, dtype=torch.float32).to(DEVICE)
-    logits = model(xb)
+    logits = model(torch.tensor(X, dtype=torch.float32).to(DEVICE))
     return torch.sigmoid(logits).cpu().numpy()
 
 
@@ -102,13 +112,13 @@ def score(y_true, probs, threshold=0.5):
         "auroc": roc_auc_score(y_true, probs),
         "f1": f1_score(y_true, preds, zero_division=0),
         "precision": precision_score(y_true, preds, zero_division=0),
-        "recall": recall_score(y_true, preds, zero_division=0),
+        "recall": recall_score(y_true, preds),
         "preds": preds,
     }
 
 
 # ------------------------------------------------------------------
-# Load & prepare data
+# Data
 # ------------------------------------------------------------------
 train, val, test = load_data()
 features = [c for c in train.columns if c not in EXCLUDED]
@@ -120,17 +130,11 @@ test = test.dropna(subset=[TARGET]).reset_index(drop=True)
 X_train_df = train[features]
 y_train = train[TARGET].astype(int).values
 groups_train = train["patient_id"].values
-
-X_val_df = val[features]
-y_val = val[TARGET].astype(int).values
-
-X_test_df = test[features]
-y_test = test[TARGET].astype(int).values
+X_val_df, y_val = val[features], val[TARGET].astype(int).values
+X_test_df, y_test = test[features], test[TARGET].astype(int).values
 
 print(f"Features ({len(features)}): {features}")
-print(f"Train rows: {len(X_train_df)} ({pd.Series(groups_train).nunique()} patients) — sepsis {y_train.mean()*100:.2f}%")
-print(f"Val rows:   {len(X_val_df)} — sepsis {y_val.mean()*100:.2f}%")
-print(f"Test rows:  {len(X_test_df)} — sepsis {y_test.mean()*100:.2f}%")
+print(f"Train sepsis prevalence: {y_train.mean()*100:.2f}%")
 
 # ------------------------------------------------------------------
 # 5-fold Grouped CV
@@ -145,43 +149,47 @@ for fold, (tr_idx, va_idx) in enumerate(gkf.split(X_train_df, y_train, groups=gr
     y_tr_fold = y_train[tr_idx]
     y_va_fold = y_train[va_idx]
 
-    # Fit imputer + scaler on train fold only
     imputer = SimpleImputer(strategy="mean").fit(X_tr_raw)
-    X_tr_imp = imputer.transform(X_tr_raw)
-    X_va_imp = imputer.transform(X_va_raw)
+    scaler = StandardScaler().fit(imputer.transform(X_tr_raw))
+    X_tr = scaler.transform(imputer.transform(X_tr_raw))
+    X_va = scaler.transform(imputer.transform(X_va_raw))
 
-    scaler = StandardScaler().fit(X_tr_imp)
-    X_tr_s = scaler.transform(X_tr_imp)
-    X_va_s = scaler.transform(X_va_imp)
+    # pos_weight from training fold only
+    n_pos = int((y_tr_fold == 1).sum())
+    n_neg = int((y_tr_fold == 0).sum())
+    pos_weight_value = n_neg / max(n_pos, 1)
+    print(f"    pos_weight = {n_neg}/{n_pos} = {pos_weight_value:.2f}")
 
-    model = train_one_model(X_tr_s, y_tr_fold, n_features=X_tr_s.shape[1])
-
-    probs = predict_proba(model, X_va_s)
+    model = train_one_model(X_tr, y_tr_fold, X_tr.shape[1], pos_weight_value)
+    probs = predict_proba(model, X_va)
     s = score(y_va_fold, probs)
     print(f"    AUROC={s['auroc']:.4f} F1={s['f1']:.4f} Prec={s['precision']:.4f} Rec={s['recall']:.4f}")
     for k in cv_scores:
         cv_scores[k].append(s[k])
 
-print(f"\n--- 5-Fold Grouped CV Summary ---")
+print(f"\n--- 5-Fold Grouped CV Summary (Variant: NN + pos_weight) ---")
 for k, vals in cv_scores.items():
     vals = np.array(vals)
     print(f"{k:9s}: {vals.mean():.4f} ± {vals.std():.4f}")
 
 # ------------------------------------------------------------------
-# Final model: fit on full training set, evaluate on val + test
+# Final model on full training set
 # ------------------------------------------------------------------
 print("\n[Final model — fit on full training set]")
 imputer = SimpleImputer(strategy="mean").fit(X_train_df.values)
 scaler = StandardScaler().fit(imputer.transform(X_train_df.values))
-
 X_train_final = scaler.transform(imputer.transform(X_train_df.values))
 X_val_final = scaler.transform(imputer.transform(X_val_df.values))
 X_test_final = scaler.transform(imputer.transform(X_test_df.values))
 
-final_model = train_one_model(X_train_final, y_train, n_features=X_train_final.shape[1])
+n_pos = int((y_train == 1).sum())
+n_neg = int((y_train == 0).sum())
+pos_weight_value = n_neg / max(n_pos, 1)
+print(f"Final pos_weight = {n_neg}/{n_pos} = {pos_weight_value:.2f}")
 
-for label, X, y in [("Validation (held-out)", X_val_final, y_val),
-                    ("Test (held-out)", X_test_final, y_test)]:
+final_model = train_one_model(X_train_final, y_train, X_train_final.shape[1], pos_weight_value)
+
+for label, X, y in [("Validation", X_val_final, y_val), ("Test", X_test_final, y_test)]:
     probs = predict_proba(final_model, X)
     s = score(y, probs)
     print(f"\n--- {label} ---")
