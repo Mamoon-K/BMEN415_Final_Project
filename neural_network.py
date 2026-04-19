@@ -14,6 +14,7 @@ Design choices (team-agreed):
 - Fixed seed for reproducibility
 """
 
+import os
 import numpy as np
 import pandas as pd
 import torch
@@ -28,6 +29,7 @@ from sklearn.metrics import (
 )
 
 from datasetup import load_data
+from feature_policy import CLASSIFICATION_TARGET as TARGET, classification_features
 
 RANDOM_SEED = 42
 N_SPLITS = 5
@@ -36,8 +38,8 @@ EPOCHS = 10
 LR = 1e-3
 HIDDEN1 = 64
 HIDDEN2 = 32
-TARGET = "SepsisLabel"
-EXCLUDED = ["MAP", "SepsisLabel", "patient_id"]
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 torch.manual_seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
@@ -111,7 +113,7 @@ def score(y_true, probs, threshold=0.5):
 # Load & prepare data
 # ------------------------------------------------------------------
 train, val, test = load_data()
-features = [c for c in train.columns if c not in EXCLUDED]
+features = classification_features(train)
 
 train = train.dropna(subset=[TARGET]).reset_index(drop=True)
 val = val.dropna(subset=[TARGET]).reset_index(drop=True)
@@ -180,14 +182,42 @@ X_test_final = scaler.transform(imputer.transform(X_test_df.values))
 
 final_model = train_one_model(X_train_final, y_train, n_features=X_train_final.shape[1])
 
-for label, X, y in [("Validation (held-out)", X_val_final, y_val),
-                    ("Test (held-out)", X_test_final, y_test)]:
+records = [{
+    "split": "cv_train",
+    "auroc": float(np.mean(cv_scores["auroc"])),
+    "auroc_std": float(np.std(cv_scores["auroc"])),
+    "f1": float(np.mean(cv_scores["f1"])),
+    "precision": float(np.mean(cv_scores["precision"])),
+    "recall": float(np.mean(cv_scores["recall"])),
+}]
+
+for label, X, y in [("val", X_val_final, y_val),
+                    ("test", X_test_final, y_test)]:
     probs = predict_proba(final_model, X)
     s = score(y, probs)
+    cm = confusion_matrix(y, s['preds'])
     print(f"\n--- {label} ---")
     print(f"AUROC    : {s['auroc']:.4f}")
     print(f"F1       : {s['f1']:.4f}")
     print(f"Precision: {s['precision']:.4f}")
     print(f"Recall   : {s['recall']:.4f}")
-    print(f"Confusion matrix:\n{confusion_matrix(y, s['preds'])}")
+    print(f"Confusion matrix:\n{cm}")
     print(classification_report(y, s['preds'], target_names=['No Sepsis', 'Sepsis'], zero_division=0))
+    records.append({
+        "split": label,
+        "auroc": s["auroc"],
+        "f1": s["f1"],
+        "precision": s["precision"],
+        "recall": s["recall"],
+    })
+    # Save CM so baseline-vs-variant comparison figures are reproducible.
+    pd.DataFrame(cm,
+                 index=["true_no_sepsis", "true_sepsis"],
+                 columns=["pred_no_sepsis", "pred_sepsis"]).to_csv(
+        os.path.join(RESULTS_DIR, f"baseline_nn_confmat_{label}.csv")
+    )
+
+pd.DataFrame(records).to_csv(
+    os.path.join(RESULTS_DIR, "baseline_nn_metrics.csv"), index=False
+)
+print(f"\nSaved: {os.path.join(RESULTS_DIR, 'baseline_nn_metrics.csv')}")

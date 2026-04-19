@@ -21,8 +21,10 @@ Evidence:
     - Bar chart of standardized coefficient magnitudes across the 3 models.
 """
 
+import os
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.linear_model import LinearRegression, Ridge, Lasso
 from sklearn.pipeline import Pipeline
 from sklearn.preprocessing import StandardScaler
@@ -31,18 +33,19 @@ from sklearn.model_selection import GroupKFold, cross_validate
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from datasetup import load_data
+from feature_policy import REGRESSION_TARGET as TARGET, regression_features
 
 RANDOM_SEED = 42
 N_SPLITS = 5
-TARGET = "MAP"
-EXCLUDED = ["MAP", "SBP", "DBP", "SepsisLabel", "patient_id"]
 RIDGE_ALPHA = 1.0
 LASSO_ALPHA = 1.0
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 np.random.seed(RANDOM_SEED)
 
 train, val, test = load_data()
-features = [c for c in train.columns if c not in EXCLUDED]
+features = regression_features(train)
 
 train = train.dropna(subset=[TARGET]).reset_index(drop=True)
 val = val.dropna(subset=[TARGET]).reset_index(drop=True)
@@ -76,7 +79,7 @@ for name, model in MODELS.items():
         ("model", model),
     ])
     cv = cross_validate(pipe, X_train, y_train, groups=groups_train,
-                        cv=gkf, scoring=scoring, n_jobs=-1)
+                        cv=gkf, scoring=scoring, n_jobs=1)
     pipe.fit(X_train, y_train)
     test_pred = pipe.predict(X_test)
 
@@ -105,6 +108,22 @@ print(f"\nLasso zeroed-out features: "
       f"{(coef_df[f'Lasso (alpha={LASSO_ALPHA})'].abs() < 1e-10).sum()} / {len(features)}")
 
 # Save results for writeup
-results_df.to_csv("mamoon_regression_results.csv", index=False)
-coef_df.to_csv("mamoon_regression_coefficients.csv")
-print("\nSaved: mamoon_regression_results.csv, mamoon_regression_coefficients.csv")
+results_path = os.path.join(RESULTS_DIR, "mamoon_regression_results.csv")
+coef_path = os.path.join(RESULTS_DIR, "mamoon_regression_coefficients.csv")
+fig_path = os.path.join(RESULTS_DIR, "mamoon_regression_coefficients.png")
+results_df.to_csv(results_path, index=False)
+coef_df.to_csv(coef_path)
+
+# Standardized coefficient magnitude comparison (horizontal bar chart per model)
+fig, axes = plt.subplots(1, len(coefs), figsize=(15, 8), sharey=True)
+for ax, (name, coef) in zip(axes, coefs.items()):
+    coef.reindex(coef.abs().sort_values(ascending=True).index).plot.barh(ax=ax, color="steelblue")
+    ax.set_title(name, fontsize=10)
+    ax.axvline(0, color="k", linewidth=0.5)
+axes[0].set_xlabel("Standardized coefficient")
+fig.suptitle("MAP regression — standardized coefficients by model")
+plt.tight_layout(rect=[0, 0, 1, 0.96])
+fig.savefig(fig_path, dpi=150)
+plt.close(fig)
+
+print(f"\nSaved:\n  {results_path}\n  {coef_path}\n  {fig_path}")

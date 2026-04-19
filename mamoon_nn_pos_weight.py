@@ -25,8 +25,10 @@ Evidence:
     - Side-by-side confusion matrices (baseline vs variant) on the test set.
 """
 
+import os
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, TensorDataset
@@ -39,6 +41,7 @@ from sklearn.metrics import (
 )
 
 from datasetup import load_data
+from feature_policy import CLASSIFICATION_TARGET as TARGET, classification_features
 
 RANDOM_SEED = 42
 N_SPLITS = 5
@@ -47,8 +50,8 @@ EPOCHS = 10
 LR = 1e-3
 HIDDEN1 = 64
 HIDDEN2 = 32
-TARGET = "SepsisLabel"
-EXCLUDED = ["MAP", "SepsisLabel", "patient_id"]
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 torch.manual_seed(RANDOM_SEED)
 np.random.seed(RANDOM_SEED)
@@ -121,7 +124,7 @@ def score(y_true, probs, threshold=0.5):
 # Data
 # ------------------------------------------------------------------
 train, val, test = load_data()
-features = [c for c in train.columns if c not in EXCLUDED]
+features = classification_features(train)
 
 train = train.dropna(subset=[TARGET]).reset_index(drop=True)
 val = val.dropna(subset=[TARGET]).reset_index(drop=True)
@@ -189,7 +192,17 @@ print(f"Final pos_weight = {n_neg}/{n_pos} = {pos_weight_value:.2f}")
 
 final_model = train_one_model(X_train_final, y_train, X_train_final.shape[1], pos_weight_value)
 
-for label, X, y in [("Validation", X_val_final, y_val), ("Test", X_test_final, y_test)]:
+records = [{
+    "split": "cv_train",
+    "auroc": float(np.mean(cv_scores["auroc"])),
+    "auroc_std": float(np.std(cv_scores["auroc"])),
+    "f1": float(np.mean(cv_scores["f1"])),
+    "precision": float(np.mean(cv_scores["precision"])),
+    "recall": float(np.mean(cv_scores["recall"])),
+}]
+
+confmats = {}
+for label, X, y in [("val", X_val_final, y_val), ("test", X_test_final, y_test)]:
     probs = predict_proba(final_model, X)
     s = score(y, probs)
     print(f"\n--- {label} ---")
@@ -199,3 +212,76 @@ for label, X, y in [("Validation", X_val_final, y_val), ("Test", X_test_final, y
     print(f"Recall   : {s['recall']:.4f}")
     print(f"Confusion matrix:\n{confusion_matrix(y, s['preds'])}")
     print(classification_report(y, s['preds'], target_names=['No Sepsis', 'Sepsis'], zero_division=0))
+    records.append({
+        "split": label,
+        "auroc": s["auroc"],
+        "f1": s["f1"],
+        "precision": s["precision"],
+        "recall": s["recall"],
+    })
+    confmats[label] = confusion_matrix(y, s["preds"])
+
+variant_df = pd.DataFrame(records)
+metrics_path = os.path.join(RESULTS_DIR, "mamoon_nn_pos_weight_metrics.csv")
+variant_df.to_csv(metrics_path, index=False)
+
+# Baseline-vs-variant comparison table.
+# Run neural_network.py first (via run_all.py) so these files exist.
+baseline_metrics_path = os.path.join(RESULTS_DIR, "baseline_nn_metrics.csv")
+comparison_path = os.path.join(RESULTS_DIR, "mamoon_nn_pos_weight_vs_baseline.csv")
+baseline_metrics_available = os.path.exists(baseline_metrics_path)
+if baseline_metrics_available:
+    baseline_df = pd.read_csv(baseline_metrics_path).assign(model="baseline_nn")
+    variant_tagged = variant_df.assign(model="nn_pos_weight")
+    comparison = pd.concat([baseline_df, variant_tagged], ignore_index=True)
+    comparison = comparison[["model", "split", "auroc", "f1", "precision", "recall"]]
+    comparison.to_csv(comparison_path, index=False)
+    print(f"\n--- Baseline vs Variant ---\n{comparison.to_string(index=False)}")
+else:
+    print(f"\n[skip baseline comparison: {baseline_metrics_path} not found — run baseline first]")
+
+
+def _draw_cm(ax, cm, title):
+    ax.imshow(cm, cmap="Blues")
+    ax.set_title(title, fontsize=10)
+    ax.set_xticks([0, 1]); ax.set_yticks([0, 1])
+    ax.set_xticklabels(["No Sepsis", "Sepsis"])
+    ax.set_yticklabels(["No Sepsis", "Sepsis"])
+    ax.set_xlabel("Predicted")
+    ax.set_ylabel("True")
+    for i in range(2):
+        for j in range(2):
+            ax.text(j, i, f"{cm[i, j]:,}", ha="center", va="center",
+                    color="white" if cm[i, j] > cm.max() / 2 else "black")
+
+
+# Try to load baseline CMs so the figure is a true side-by-side comparison.
+baseline_cms = {}
+for label in ("val", "test"):
+    p = os.path.join(RESULTS_DIR, f"baseline_nn_confmat_{label}.csv")
+    if os.path.exists(p):
+        baseline_cms[label] = pd.read_csv(p, index_col=0).values
+
+fig_path = os.path.join(RESULTS_DIR, "mamoon_nn_pos_weight_confmats.png")
+if len(baseline_cms) == 2:
+    # 2x2 grid: rows = model (baseline, variant), cols = split (val, test)
+    fig, axes = plt.subplots(2, 2, figsize=(10, 8))
+    _draw_cm(axes[0, 0], baseline_cms["val"],  "Baseline NN — val")
+    _draw_cm(axes[0, 1], baseline_cms["test"], "Baseline NN — test")
+    _draw_cm(axes[1, 0], confmats["val"],      "NN + pos_weight — val")
+    _draw_cm(axes[1, 1], confmats["test"],     "NN + pos_weight — test")
+    fig.suptitle("Confusion matrices — baseline vs pos_weight variant")
+else:
+    # Fall back to variant-only if baseline CMs aren't available yet.
+    fig, axes = plt.subplots(1, 2, figsize=(10, 4))
+    _draw_cm(axes[0], confmats["val"],  "NN + pos_weight — val")
+    _draw_cm(axes[1], confmats["test"], "NN + pos_weight — test")
+    fig.suptitle("NN + pos_weight — confusion matrices")
+
+plt.tight_layout(rect=[0, 0, 1, 0.95])
+fig.savefig(fig_path, dpi=150)
+plt.close(fig)
+
+print(f"\nSaved:\n  {metrics_path}\n  {fig_path}")
+if baseline_metrics_available:
+    print(f"  {comparison_path}")

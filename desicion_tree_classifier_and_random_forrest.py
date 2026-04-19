@@ -13,6 +13,7 @@ Design choices (team-agreed):
 - Fixed seed for reproducibility
 """
 
+import os
 import numpy as np
 import pandas as pd
 from sklearn.tree import DecisionTreeClassifier
@@ -25,17 +26,18 @@ from sklearn.metrics import (
 )
 
 from datasetup import load_data
+from feature_policy import CLASSIFICATION_TARGET as TARGET, classification_features
 
 RANDOM_SEED = 42
 N_SPLITS = 5
-TARGET = "SepsisLabel"
-EXCLUDED = ["MAP", "SepsisLabel", "patient_id"]
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 np.random.seed(RANDOM_SEED)
 
 train, val, test = load_data()
 
-features = [c for c in train.columns if c not in EXCLUDED]
+features = classification_features(train)
 
 # Drop rows with missing target
 train = train.dropna(subset=[TARGET]).reset_index(drop=True)
@@ -66,7 +68,7 @@ scoring = {
 }
 cv = cross_validate(
     pipeline, X_train, y_train, groups=groups_train,
-    cv=gkf, scoring=scoring, n_jobs=-1,
+    cv=gkf, scoring=scoring, n_jobs=1,
 )
 
 print(f"\n--- 5-Fold Grouped CV (on training set) ---")
@@ -78,6 +80,8 @@ print(f"Recall   : {cv['test_recall'].mean():.4f} ± {cv['test_recall'].std():.4
 # Fit on full training, evaluate on val and test
 pipeline.fit(X_train, y_train)
 
+records = []
+
 def report(label, X, y):
     preds = pipeline.predict(X)
     probs = pipeline.predict_proba(X)[:, 1]
@@ -88,6 +92,28 @@ def report(label, X, y):
     print(f"Recall   : {recall_score(y, preds):.4f}")
     print(f"Confusion matrix:\n{confusion_matrix(y, preds)}")
     print(classification_report(y, preds, target_names=["No Sepsis", "Sepsis"], zero_division=0))
+    records.append({
+        "split": label,
+        "auroc": roc_auc_score(y, probs),
+        "f1": f1_score(y, preds),
+        "precision": precision_score(y, preds, zero_division=0),
+        "recall": recall_score(y, preds),
+    })
 
-report("Validation (held-out)", X_val, y_val)
-report("Test (held-out)", X_test, y_test)
+records.append({
+    "split": "cv_train",
+    "auroc": cv["test_auroc"].mean(),
+    "auroc_std": cv["test_auroc"].std(),
+    "f1": cv["test_f1"].mean(),
+    "f1_std": cv["test_f1"].std(),
+    "precision": cv["test_precision"].mean(),
+    "recall": cv["test_recall"].mean(),
+})
+
+report("val", X_val, y_val)
+report("test", X_test, y_test)
+
+pd.DataFrame(records).to_csv(
+    os.path.join(RESULTS_DIR, "baseline_dt_metrics.csv"), index=False
+)
+print(f"\nSaved: {os.path.join(RESULTS_DIR, 'baseline_dt_metrics.csv')}")

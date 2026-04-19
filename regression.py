@@ -12,6 +12,7 @@ Design choices (team-agreed):
 - Fixed seed for reproducibility
 """
 
+import os
 import numpy as np
 import pandas as pd
 from sklearn.linear_model import LinearRegression
@@ -22,17 +23,18 @@ from sklearn.model_selection import GroupKFold, cross_validate
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 
 from datasetup import load_data
+from feature_policy import REGRESSION_TARGET as TARGET, regression_features
 
 RANDOM_SEED = 42
 N_SPLITS = 5
-TARGET = "MAP"
-EXCLUDED = ["MAP", "SBP", "DBP", "SepsisLabel", "patient_id"]
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 np.random.seed(RANDOM_SEED)
 
 train, val, test = load_data()
 
-features = [c for c in train.columns if c not in EXCLUDED]
+features = regression_features(train)
 
 # Drop rows with missing target (can't train/evaluate without a label)
 train = train.dropna(subset=[TARGET]).reset_index(drop=True)
@@ -63,7 +65,7 @@ scoring = {
 }
 cv = cross_validate(
     pipeline, X_train, y_train, groups=groups_train,
-    cv=gkf, scoring=scoring, n_jobs=-1, return_train_score=False,
+    cv=gkf, scoring=scoring, n_jobs=1, return_train_score=False,
 )
 
 print(f"\n--- 5-Fold Grouped CV (on training set) ---")
@@ -85,3 +87,26 @@ print(f"\n--- Test (held-out) ---")
 print(f"RMSE: {np.sqrt(mean_squared_error(y_test, test_preds)):.3f} mmHg")
 print(f"MAE : {mean_absolute_error(y_test, test_preds):.3f} mmHg")
 print(f"R^2 : {r2_score(y_test, test_preds):.4f}")
+
+# Save metrics
+metrics = pd.DataFrame([{
+    "split": "cv_train",
+    "rmse": (-cv["test_neg_rmse"]).mean(),
+    "rmse_std": cv["test_neg_rmse"].std(),
+    "mae":  (-cv["test_neg_mae"]).mean(),
+    "mae_std":  cv["test_neg_mae"].std(),
+    "r2":   cv["test_r2"].mean(),
+    "r2_std":   cv["test_r2"].std(),
+}, {
+    "split": "val",
+    "rmse": np.sqrt(mean_squared_error(y_val, val_preds)),
+    "mae":  mean_absolute_error(y_val, val_preds),
+    "r2":   r2_score(y_val, val_preds),
+}, {
+    "split": "test",
+    "rmse": np.sqrt(mean_squared_error(y_test, test_preds)),
+    "mae":  mean_absolute_error(y_test, test_preds),
+    "r2":   r2_score(y_test, test_preds),
+}])
+metrics.to_csv(os.path.join(RESULTS_DIR, "baseline_regression_metrics.csv"), index=False)
+print(f"\nSaved: {os.path.join(RESULTS_DIR, 'baseline_regression_metrics.csv')}")

@@ -4,50 +4,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 
-# ──────────────────────────────────────────────
-# 1. Load and merge all .psv files into one CSV
-# ──────────────────────────────────────────────
-DATA_DIR = os.path.join(os.path.dirname(__file__), "data")
-CSV_PATH = os.path.join(DATA_DIR, "combined_data.csv")
+from datasetup import load_combined_df
 
-SET_A = "/Users/m.a.k/Desktop/training_setA"
-SET_B = "/Users/m.a.k/Desktop/training_setB"
-
-
-def load_psv_files(folder):
-    """Load all .psv files from a folder, adding a patient_id column."""
-    frames = []
-    for fname in sorted(os.listdir(folder)):
-        if not fname.endswith(".psv"):
-            continue
-        patient_id = fname.replace(".psv", "")
-        df = pd.read_csv(os.path.join(folder, fname), sep="|")
-        df.insert(0, "patient_id", patient_id)
-        frames.append(df)
-    return frames
-
-
-def build_combined_csv():
-    """Merge training sets A & B into a single CSV."""
-    print("Loading training_setA ...")
-    frames_a = load_psv_files(SET_A)
-    print(f"  {len(frames_a)} patients")
-
-    print("Loading training_setB ...")
-    frames_b = load_psv_files(SET_B)
-    print(f"  {len(frames_b)} patients")
-
-    df = pd.concat(frames_a + frames_b, ignore_index=True)
-    df.to_csv(CSV_PATH, index=False)
-    print(f"Saved combined CSV -> {CSV_PATH}  ({len(df)} rows, {df['patient_id'].nunique()} patients)")
-    return df
-
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+PLOTS_DIR = os.path.join(RESULTS_DIR, "plots")
 
 # ──────────────────────────────────────────
-# 2. Exploratory Data Analysis
+# Exploratory Data Analysis
 # ──────────────────────────────────────────
 def run_eda(df):
-    os.makedirs(os.path.join(DATA_DIR, "plots"), exist_ok=True)
+    os.makedirs(PLOTS_DIR, exist_ok=True)
 
     print("\n===== Dataset Overview =====")
     print(f"Total rows:     {len(df)}")
@@ -66,7 +32,7 @@ def run_eda(df):
     ax.set_title("Missing Data by Feature")
     ax.invert_yaxis()
     plt.tight_layout()
-    fig.savefig(os.path.join(DATA_DIR, "plots", "missing_data.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "missing_data.png"), dpi=150)
     plt.close(fig)
 
     # --- 2b. SepsisLabel class distribution ---
@@ -82,7 +48,7 @@ def run_eda(df):
     for i, v in enumerate(sepsis_counts):
         ax.text(i, v + len(df) * 0.005, f"{v:,}", ha="center", fontsize=9)
     plt.tight_layout()
-    fig.savefig(os.path.join(DATA_DIR, "plots", "sepsis_distribution.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "sepsis_distribution.png"), dpi=150)
     plt.close(fig)
 
     # --- 2c. Vital sign distributions (usable features) ---
@@ -94,7 +60,7 @@ def run_eda(df):
         ax.set_xlabel(col)
     fig.suptitle("Vital Sign Distributions (features)")
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig(os.path.join(DATA_DIR, "plots", "vital_distributions.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "vital_distributions.png"), dpi=150)
     plt.close(fig)
 
     # --- 2d. MAP distribution (regression target) ---
@@ -111,7 +77,7 @@ def run_eda(df):
     ax.set_title("MAP Distribution (Regression Target)")
     ax.legend()
     plt.tight_layout()
-    fig.savefig(os.path.join(DATA_DIR, "plots", "map_distribution.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "map_distribution.png"), dpi=150)
     plt.close(fig)
 
     # --- 2e. Correlation heatmap (features vs. targets) ---
@@ -124,7 +90,7 @@ def run_eda(df):
                 xticklabels=True, yticklabels=True, linewidths=0.3)
     ax.set_title("Feature Correlation Heatmap")
     plt.tight_layout()
-    fig.savefig(os.path.join(DATA_DIR, "plots", "correlation_heatmap.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "correlation_heatmap.png"), dpi=150)
     plt.close(fig)
 
     # Print correlations with targets
@@ -145,7 +111,7 @@ def run_eda(df):
     axes[1].set_title("Feature Correlation with SepsisLabel")
     axes[1].set_xlabel("Pearson r")
     plt.tight_layout()
-    fig.savefig(os.path.join(DATA_DIR, "plots", "target_correlations.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "target_correlations.png"), dpi=150)
     plt.close(fig)
 
     # --- 2f. Sepsis vs Non-Sepsis feature distributions ---
@@ -163,7 +129,7 @@ def run_eda(df):
         ax.legend(fontsize=8)
     fig.suptitle("Vital Signs: Sepsis vs Non-Sepsis (Normalized)")
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig(os.path.join(DATA_DIR, "plots", "vitals_sepsis_comparison.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "vitals_sepsis_comparison.png"), dpi=150)
     plt.close(fig)
 
     # Key lab values comparison
@@ -180,7 +146,7 @@ def run_eda(df):
         ax.set_xlabel(col)
     fig.suptitle("Lab Values: Sepsis vs Non-Sepsis (Normalized)")
     plt.tight_layout(rect=[0, 0, 1, 0.95])
-    fig.savefig(os.path.join(DATA_DIR, "plots", "labs_sepsis_comparison.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "labs_sepsis_comparison.png"), dpi=150)
     plt.close(fig)
 
     # --- 2g. Patient-level sepsis prevalence ---
@@ -199,7 +165,7 @@ def run_eda(df):
     for i, v in enumerate(pat_counts):
         ax.text(i, v + len(patient_sepsis) * 0.005, f"{v:,}", ha="center", fontsize=9)
     plt.tight_layout()
-    fig.savefig(os.path.join(DATA_DIR, "plots", "patient_sepsis_prevalence.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "patient_sepsis_prevalence.png"), dpi=150)
     plt.close(fig)
 
     # --- 2h. Demographics ---
@@ -222,24 +188,19 @@ def run_eda(df):
     for i, v in enumerate(gender_sepsis):
         axes[1].text(i, v + 0.05, f"{v:.2f}%", ha="center", fontsize=9)
     plt.tight_layout()
-    fig.savefig(os.path.join(DATA_DIR, "plots", "demographics.png"), dpi=150)
+    fig.savefig(os.path.join(PLOTS_DIR, "demographics.png"), dpi=150)
     plt.close(fig)
 
     # --- 2i. Basic descriptive stats ---
     print("\n===== Descriptive Statistics =====")
     print(df.describe().to_string())
 
-    print(f"\nPlots saved to {os.path.join(DATA_DIR, 'plots')}/")
+    print(f"\nPlots saved to {PLOTS_DIR}/")
 
 
 # ──────────────────────────────────────────
 # Main
 # ──────────────────────────────────────────
 if __name__ == "__main__":
-    if os.path.exists(CSV_PATH):
-        print(f"Loading existing CSV: {CSV_PATH}")
-        df = pd.read_csv(CSV_PATH)
-    else:
-        df = build_combined_csv()
-
+    df = load_combined_df()
     run_eda(df)

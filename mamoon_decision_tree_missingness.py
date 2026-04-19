@@ -23,8 +23,10 @@ Evidence:
     - Bar chart of feature importances with *_missing columns highlighted.
 """
 
+import os
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from sklearn.tree import DecisionTreeClassifier
 from sklearn.pipeline import Pipeline
 from sklearn.impute import SimpleImputer
@@ -36,11 +38,12 @@ from sklearn.metrics import (
 )
 
 from datasetup import load_data
+from feature_policy import CLASSIFICATION_TARGET as TARGET, classification_features
 
 RANDOM_SEED = 42
 N_SPLITS = 5
-TARGET = "SepsisLabel"
-EXCLUDED = ["MAP", "SepsisLabel", "patient_id"]
+RESULTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "results")
+os.makedirs(RESULTS_DIR, exist_ok=True)
 
 np.random.seed(RANDOM_SEED)
 
@@ -63,7 +66,7 @@ class MissingnessIndicator(BaseEstimator, TransformerMixin):
 
 
 train, val, test = load_data()
-features = [c for c in train.columns if c not in EXCLUDED]
+features = classification_features(train)
 
 train = train.dropna(subset=[TARGET]).reset_index(drop=True)
 val = val.dropna(subset=[TARGET]).reset_index(drop=True)
@@ -86,7 +89,7 @@ pipeline = Pipeline([
 gkf = GroupKFold(n_splits=N_SPLITS)
 scoring = {"auroc": "roc_auc", "f1": "f1", "precision": "precision", "recall": "recall"}
 cv = cross_validate(pipeline, X_train, y_train, groups=groups_train,
-                    cv=gkf, scoring=scoring, n_jobs=-1)
+                    cv=gkf, scoring=scoring, n_jobs=1)
 
 print(f"\n--- 5-Fold Grouped CV (Variant: DT + Missingness Indicators) ---")
 print(f"AUROC    : {cv['test_auroc'].mean():.4f} ± {cv['test_auroc'].std():.4f}")
@@ -95,6 +98,15 @@ print(f"Precision: {cv['test_precision'].mean():.4f} ± {cv['test_precision'].st
 print(f"Recall   : {cv['test_recall'].mean():.4f} ± {cv['test_recall'].std():.4f}")
 
 pipeline.fit(X_train, y_train)
+
+records = [{
+    "split": "cv_train",
+    "auroc": cv["test_auroc"].mean(),
+    "auroc_std": cv["test_auroc"].std(),
+    "f1": cv["test_f1"].mean(),
+    "precision": cv["test_precision"].mean(),
+    "recall": cv["test_recall"].mean(),
+}]
 
 def report(label, X, y):
     preds = pipeline.predict(X)
@@ -106,9 +118,34 @@ def report(label, X, y):
     print(f"Recall   : {recall_score(y, preds):.4f}")
     print(f"Confusion matrix:\n{confusion_matrix(y, preds)}")
     print(classification_report(y, preds, target_names=['No Sepsis', 'Sepsis'], zero_division=0))
+    records.append({
+        "split": label,
+        "auroc": roc_auc_score(y, probs),
+        "f1": f1_score(y, preds, zero_division=0),
+        "precision": precision_score(y, preds, zero_division=0),
+        "recall": recall_score(y, preds),
+    })
 
-report("Validation", X_val, y_val)
-report("Test", X_test, y_test)
+report("val", X_val, y_val)
+report("test", X_test, y_test)
+
+variant_df = pd.DataFrame(records)
+metrics_path = os.path.join(RESULTS_DIR, "mamoon_dt_missingness_metrics.csv")
+variant_df.to_csv(metrics_path, index=False)
+
+# Baseline-vs-variant comparison table (evidence for the verification plan).
+# Run the DT baseline first (via run_all.py) so this file exists.
+baseline_path = os.path.join(RESULTS_DIR, "baseline_dt_metrics.csv")
+comparison_path = os.path.join(RESULTS_DIR, "mamoon_dt_missingness_vs_baseline.csv")
+if os.path.exists(baseline_path):
+    baseline_df = pd.read_csv(baseline_path).assign(model="baseline_dt")
+    variant_tagged = variant_df.assign(model="dt_missingness")
+    comparison = pd.concat([baseline_df, variant_tagged], ignore_index=True)
+    comparison = comparison[["model", "split", "auroc", "f1", "precision", "recall"]]
+    comparison.to_csv(comparison_path, index=False)
+    print(f"\n--- Baseline vs Variant ---\n{comparison.to_string(index=False)}")
+else:
+    print(f"\n[skip baseline comparison: {baseline_path} not found — run baseline first]")
 
 # Feature importance — highlight *_missing columns
 expanded_features = features + [f"{f}_missing" for f in features]
@@ -121,5 +158,21 @@ print(fi.head(15).to_string())
 missing_cols_top10 = [c for c in fi.head(10).index if c.endswith("_missing")]
 print(f"\n*_missing columns in top-10: {missing_cols_top10}")
 
-fi.to_csv("mamoon_dt_missingness_feature_importance.csv")
-print("\nSaved: mamoon_dt_missingness_feature_importance.csv")
+fi_path = os.path.join(RESULTS_DIR, "mamoon_dt_missingness_feature_importance.csv")
+fi.to_csv(fi_path)
+
+# Top-20 feature importance bar chart; _missing columns highlighted
+top20 = fi.head(20)
+colors = ["#dd8452" if c.endswith("_missing") else "steelblue" for c in top20.index]
+fig, ax = plt.subplots(figsize=(9, 7))
+top20.iloc[::-1].plot.barh(ax=ax, color=colors[::-1])
+ax.set_xlabel("Feature importance (Gini)")
+ax.set_title("DT + missingness indicators — top-20 features\n(orange = *_missing flag)")
+plt.tight_layout()
+fig_path = os.path.join(RESULTS_DIR, "mamoon_dt_missingness_feature_importance.png")
+fig.savefig(fig_path, dpi=150)
+plt.close(fig)
+
+print(f"\nSaved:\n  {metrics_path}\n  {fi_path}\n  {fig_path}")
+if os.path.exists(baseline_path):
+    print(f"  {comparison_path}")
