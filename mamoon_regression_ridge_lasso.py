@@ -1,7 +1,7 @@
 """
 Mamoon's Design Decision — Regression Variant: Ridge & Lasso regularization
 
-Difference from baseline (regression.py):
+Difference from baseline (regression_baseline.py):
     Pipeline's final step: LinearRegression  ->  Ridge(alpha=1.0)  AND  Lasso(alpha=1.0)
     Everything else identical (same features, imputation, scaling, CV, seed).
 

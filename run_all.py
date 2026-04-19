@@ -17,12 +17,13 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 
 SCRIPTS = [
     "eda.py",
-    "regression.py",
-    "desicion_tree_classifier_and_random_forrest.py",
-    "neural_network.py",
+    "regression_baseline.py",
+    "decision_tree_baseline.py",
+    "neural_network_baseline.py",
     "mamoon_regression_ridge_lasso.py",
     "mamoon_decision_tree_missingness.py",
     "mamoon_nn_pos_weight.py",
+    "baseline_summary.py",
 ]
 
 

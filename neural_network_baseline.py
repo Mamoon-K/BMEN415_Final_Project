@@ -10,7 +10,8 @@ Design choices (team-agreed):
 - Simple feed-forward NN: Input -> 64 -> 32 -> 1, ReLU activations, dropout disabled
 - BCEWithLogitsLoss (NO pos_weight — imbalance handling is a team member's DD)
 - Adam optimizer, lr=1e-3, batch_size=1024, 10 epochs
-- Metrics: AUROC, F1, Precision, Recall — CV mean±std and final held-out test
+- Metrics: AUROC, AUPRC, F1, Precision, Recall — CV mean±std and final held-out test.
+  AUPRC is the primary discrimination metric under ~2% prevalence.
 - Fixed seed for reproducibility
 """
 
@@ -24,7 +25,8 @@ from sklearn.preprocessing import StandardScaler
 from sklearn.impute import SimpleImputer
 from sklearn.model_selection import GroupKFold
 from sklearn.metrics import (
-    roc_auc_score, f1_score, recall_score, precision_score,
+    roc_auc_score, average_precision_score,
+    f1_score, recall_score, precision_score,
     confusion_matrix, classification_report,
 )
 
@@ -102,6 +104,7 @@ def score(y_true, probs, threshold=0.5):
     preds = (probs >= threshold).astype(int)
     return {
         "auroc": roc_auc_score(y_true, probs),
+        "auprc": average_precision_score(y_true, probs),
         "f1": f1_score(y_true, preds, zero_division=0),
         "precision": precision_score(y_true, preds, zero_division=0),
         "recall": recall_score(y_true, preds, zero_division=0),
@@ -138,7 +141,7 @@ print(f"Test rows:  {len(X_test_df)} — sepsis {y_test.mean()*100:.2f}%")
 # 5-fold Grouped CV
 # ------------------------------------------------------------------
 gkf = GroupKFold(n_splits=N_SPLITS)
-cv_scores = {"auroc": [], "f1": [], "precision": [], "recall": []}
+cv_scores = {"auroc": [], "auprc": [], "f1": [], "precision": [], "recall": []}
 
 for fold, (tr_idx, va_idx) in enumerate(gkf.split(X_train_df, y_train, groups=groups_train), start=1):
     print(f"\n[Fold {fold}/{N_SPLITS}]")
@@ -160,7 +163,8 @@ for fold, (tr_idx, va_idx) in enumerate(gkf.split(X_train_df, y_train, groups=gr
 
     probs = predict_proba(model, X_va_s)
     s = score(y_va_fold, probs)
-    print(f"    AUROC={s['auroc']:.4f} F1={s['f1']:.4f} Prec={s['precision']:.4f} Rec={s['recall']:.4f}")
+    print(f"    AUROC={s['auroc']:.4f} AUPRC={s['auprc']:.4f} F1={s['f1']:.4f} "
+          f"Prec={s['precision']:.4f} Rec={s['recall']:.4f}")
     for k in cv_scores:
         cv_scores[k].append(s[k])
 
@@ -186,6 +190,8 @@ records = [{
     "split": "cv_train",
     "auroc": float(np.mean(cv_scores["auroc"])),
     "auroc_std": float(np.std(cv_scores["auroc"])),
+    "auprc": float(np.mean(cv_scores["auprc"])),
+    "auprc_std": float(np.std(cv_scores["auprc"])),
     "f1": float(np.mean(cv_scores["f1"])),
     "precision": float(np.mean(cv_scores["precision"])),
     "recall": float(np.mean(cv_scores["recall"])),
@@ -198,6 +204,7 @@ for label, X, y in [("val", X_val_final, y_val),
     cm = confusion_matrix(y, s['preds'])
     print(f"\n--- {label} ---")
     print(f"AUROC    : {s['auroc']:.4f}")
+    print(f"AUPRC    : {s['auprc']:.4f}")
     print(f"F1       : {s['f1']:.4f}")
     print(f"Precision: {s['precision']:.4f}")
     print(f"Recall   : {s['recall']:.4f}")
@@ -206,6 +213,7 @@ for label, X, y in [("val", X_val_final, y_val),
     records.append({
         "split": label,
         "auroc": s["auroc"],
+        "auprc": s["auprc"],
         "f1": s["f1"],
         "precision": s["precision"],
         "recall": s["recall"],

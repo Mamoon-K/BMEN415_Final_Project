@@ -1,7 +1,7 @@
 """
 Mamoon's Design Decision — NN Variant: pos_weight for class imbalance
 
-Difference from baseline (neural_network.py):
+Difference from baseline (neural_network_baseline.py):
     BCEWithLogitsLoss()  ->  BCEWithLogitsLoss(pos_weight = num_neg / num_pos)
     pos_weight is computed from the training fold so the positive (sepsis)
     class contributes proportionally more to the loss.
@@ -226,7 +226,7 @@ metrics_path = os.path.join(RESULTS_DIR, "mamoon_nn_pos_weight_metrics.csv")
 variant_df.to_csv(metrics_path, index=False)
 
 # Baseline-vs-variant comparison table.
-# Run neural_network.py first (via run_all.py) so these files exist.
+# Run neural_network_baseline.py first (via run_all.py) so these files exist.
 baseline_metrics_path = os.path.join(RESULTS_DIR, "baseline_nn_metrics.csv")
 comparison_path = os.path.join(RESULTS_DIR, "mamoon_nn_pos_weight_vs_baseline.csv")
 baseline_metrics_available = os.path.exists(baseline_metrics_path)

@@ -1,7 +1,7 @@
 """
 Mamoon's Design Decision — Non-NN Variant: Missingness Indicators
 
-Difference from baseline (desicion_tree_classifier_and_random_forrest.py):
+Difference from baseline (decision_tree_baseline.py):
     For every input feature with any NaN in training, add a new column
     `<feature>_missing` = 1 if NaN, 0 if present — BEFORE mean imputation.
     The tree then sees both the (imputed) value AND whether it was measured.
