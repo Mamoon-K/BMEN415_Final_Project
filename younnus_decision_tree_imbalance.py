@@ -23,8 +23,6 @@ as the model will reduce false negatives by better learning the minority class. 
 This result will likely benefit the model as the clinical cost of missing sepsis cases 
 (false negatives) is much higher than the cost of false positives in this context.
  
-All other design choices unchanged (same features, mean imputer, no scaler, CV scheme,
-max_depth=5, metrics, random seed) so results are directly comparable to the baseline.
 """
  
 import os
