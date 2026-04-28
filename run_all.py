@@ -14,6 +14,9 @@ import sys
 import time
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
+CACHE_DIR = os.path.join(THIS_DIR, ".runtime_cache")
+MPL_CACHE_DIR = os.path.join(CACHE_DIR, "matplotlib")
+XDG_CACHE_DIR = os.path.join(CACHE_DIR, "xdg")
 
 SCRIPTS = [
     "eda.py",
@@ -31,13 +34,19 @@ def run(script):
     path = os.path.join(THIS_DIR, script)
     print(f"\n{'=' * 70}\n▶ {script}\n{'=' * 70}", flush=True)
     t0 = time.time()
-    result = subprocess.run([sys.executable, path], cwd=THIS_DIR)
+    env = os.environ.copy()
+    env.setdefault("MPLBACKEND", "Agg")
+    env.setdefault("MPLCONFIGDIR", MPL_CACHE_DIR)
+    env.setdefault("XDG_CACHE_HOME", XDG_CACHE_DIR)
+    result = subprocess.run([sys.executable, path], cwd=THIS_DIR, env=env)
     elapsed = time.time() - t0
     return result.returncode, elapsed
 
 
 def main():
     os.makedirs(os.path.join(THIS_DIR, "results"), exist_ok=True)
+    os.makedirs(MPL_CACHE_DIR, exist_ok=True)
+    os.makedirs(XDG_CACHE_DIR, exist_ok=True)
     failures = []
     for script in SCRIPTS:
         code, elapsed = run(script)

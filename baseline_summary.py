@@ -10,6 +10,8 @@ Run after the three baseline scripts so their CSVs exist.
 """
 
 import os
+import matplotlib
+matplotlib.use("Agg")
 import pandas as pd
 import matplotlib.pyplot as plt
 
